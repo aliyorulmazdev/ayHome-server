@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const Redis = require('ioredis');
+const { SerialPort } = require('serialport')
+
 const app = express();
 
 app.use(cors({
@@ -20,6 +22,27 @@ const redisConfig = {
 };
 const redisClient = new Redis(redisConfig);
 
+// Serial port configuration
+const port = new SerialPort({
+  path: 'COM5',
+  baudRate: 9600,
+}, false);
+
+// Event handler for errors
+port.on('error', (err) => {
+  console.error('Error:', err.message);
+});
+
+// Event handler for when the port is open
+port.on('open', () => {
+  console.log('Serial port is open');
+  // Your code to send/receive data or perform other operations with the open port
+});
+
+// Open the serial port
+port.open();
+
+
 app.post('/api/control-device', async (req, res) => {
   console.log('Received data:', req.body);
 
@@ -32,15 +55,21 @@ app.post('/api/control-device', async (req, res) => {
     await redisClient.del(key);
     const first = await redisClient.hmset(key, 'roomName', roomName, 'action', action, 'time', currentTime);
     const updateData = { roomName, action };
-    console.log(`Saved/Updated data on redis for ${deviceType}: `, first, updateData);
+    // console.log(`Saved/Updated data on redis for ${deviceType}: `, first, updateData);
     await redisClient.publish(`${deviceType}StatusUpdates`, JSON.stringify(updateData));
-    console.log(`Published to channel(${deviceType}StatusUpdates): `, updateData);
+    // console.log(`Published to channel(${deviceType}StatusUpdates): `, updateData);
+
+    // Arduino'ya komutu gönder
+    const arduinoCommand = `roomName: '${roomName}', action: '${action}', deviceType: '${deviceType}'\n`;
+    port.write(arduinoCommand);
+    console.log(`${arduinoCommand} başarıyla ${port.path} portuna gönderildi. `);
+
     const successMessage = `Device in ${roomName} ${action === 'on' ? 'turned on' : 'turned off'}.`;
     res.status(200).json({
       message: successMessage,
       success: true
     });
-    console.log(`Send response successfully for ${deviceType}: `, updateData);
+    // console.log(`Send response successfully for ${deviceType}: `, updateData);
   } catch (error) {
     console.error(`Error updating data in Redis for ${deviceType}:`, error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -48,7 +77,7 @@ app.post('/api/control-device', async (req, res) => {
 });
 
 app.post('/api/get-device-status', async (req, res) => {
-  console.log('Received request:', req.body);
+  // console.log('Received request:', req.body);
   const { roomName, deviceType } = req.body;
   const key = `actionLogs:${roomName}:${deviceType}`;
   try {
